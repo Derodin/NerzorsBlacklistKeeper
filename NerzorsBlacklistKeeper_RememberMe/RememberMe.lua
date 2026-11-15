@@ -819,8 +819,15 @@ function RememberMe:_BuildTab(parent)
     local L     = NBK.L
     local theme = NUL:GetTheme()
 
-    self.sortKey = self.sortKey or "rating"
-    self.sortDir = self.sortDir or "desc"
+    if not self.sortKey then
+        self.sortKey, self.sortDir = "rating", "desc"
+        if NBK.GetSavedSort then
+            local key, dir = NBK:GetSavedSort("remember_me", "rating", "desc")
+            if key == "class" or key == "name" or key == "rating" or key == "added" then
+                self.sortKey, self.sortDir = key, dir
+            end
+        end
+    end
 
     local root = CreateFrame("Frame", nil, parent)
     root:SetAllPoints()
@@ -895,6 +902,7 @@ function RememberMe:_SetSort(key)
             self.sortDir = "asc"
         end
     end
+    if NBK.SaveSort then NBK:SaveSort("remember_me", self.sortKey, self.sortDir) end
     if tabUI.header and tabUI.header._paint then tabUI.header._paint() end
     self:RefreshTab()
 end

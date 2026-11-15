@@ -17,4 +17,5 @@ NBK:RegisterLocaleStrings("ruRU", {
     ["Clear recents..."]                     = "Очистить недавние...",
     ["Clear all %d recents entries?"]        = "Удалить все недавние записи (%d)?",
     ["Cleared %d recents entries."]          = "Удалено недавних записей: %d.",
+    ["No recent group members yet. Players you were in a party with show up here."] = "Пока нет недавних участников группы. Игроки, с которыми вы были в группе, появляются здесь.",
 })

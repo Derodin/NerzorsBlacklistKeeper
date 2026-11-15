@@ -17,4 +17,5 @@ NBK:RegisterLocaleStrings("frFR", {
     ["Clear recents..."]                     = "Vider les récents...",
     ["Clear all %d recents entries?"]        = "Supprimer les %d entrées récentes ?",
     ["Cleared %d recents entries."]          = "Entrées récentes supprimées : %d.",
+    ["No recent group members yet. Players you were in a party with show up here."] = "Aucun membre de groupe récent pour l'instant. Les joueurs avec qui vous avez été en groupe apparaissent ici.",
 })

@@ -19,7 +19,8 @@ end
 
 local function store()
     if type(_G.NerzorsBlacklistKeeperChatHistoryDB) ~= "table" then
-        _G.NerzorsBlacklistKeeperChatHistoryDB = { version = 1, players = {} }
+
+        _G.NerzorsBlacklistKeeperChatHistoryDB = { version = 2, players = {} }
     end
     local db = _G.NerzorsBlacklistKeeperChatHistoryDB
     if type(db.players) ~= "table" then db.players = {} end
@@ -68,8 +69,45 @@ local function channelLabel(msg)
     return map[ch] or ch or "?"
 end
 
+local DUP_WINDOW = 1
+
+local function sameMessage(m, chToken, cn, text, t)
+    return m ~= nil and m.msg == text and m.ch == chToken and m.cn == cn
+       and math.abs((m.t or 0) - t) <= DUP_WINDOW
+end
+
+local seenLines, seenCount = {}, 0
+
+local function lineSeen(lineID)
+    if type(lineID) ~= "number" then return false end
+    if issecretvalue and issecretvalue(lineID) then return false end
+    if seenLines[lineID] then return true end
+    if seenCount >= 200 then wipe(seenLines); seenCount = 0 end
+    seenLines[lineID] = true
+    seenCount = seenCount + 1
+    return false
+end
+
+local function collapse(p)
+    local msgs = p.messages
+    if type(msgs) ~= "table" or #msgs < 2 then return 0 end
+    local out = { msgs[1] }
+    for i = 2, #msgs do
+        local m = msgs[i]
+        if not sameMessage(out[#out], m.ch, m.cn, m.msg, m.t or 0) then
+            out[#out + 1] = m
+        end
+    end
+    local dropped = #msgs - #out
+    if dropped > 0 then
+        p.messages = out
+        p.count    = #out
+    end
+    return dropped
+end
+
 local function record(name, realm, chToken, channelName, text)
-    if not name or not text then return end
+    if not name or not text then return false end
     local db  = store()
     local key = playerKey(name, realm)
     local p   = db.players[key]
@@ -89,10 +127,12 @@ local function record(name, realm, chToken, channelName, text)
     end
 
     local now = time()
+    local cn  = (chToken == "CHANNEL") and channelName or nil
+    if sameMessage(p.messages[#p.messages], chToken, cn, text, now) then return false end
     table.insert(p.messages, {
         t   = now,
         ch  = chToken,
-        cn  = (chToken == "CHANNEL") and channelName or nil,
+        cn  = cn,
         msg = text,
     })
     p.lastAt = now
@@ -102,18 +142,29 @@ local function record(name, realm, chToken, channelName, text)
         table.remove(p.messages, 1)
     end
     p.count = #p.messages
+    return true
 end
 
-function MessageHistory:RecordFromFilter(name, realm, event, text, channelBaseName)
+function MessageHistory:RecordFromFilter(name, realm, event, text, channelBaseName, lineID)
     if historySettings().enabled == false then return end
     if type(text) ~= "string" then return end
     local chToken = EVENT_CHANNEL[event]
     if not chToken then return end
     if not name then return end
+    if lineSeen(lineID) then return end
 
-    record(name, realm, chToken, channelBaseName, text)
+    if not record(name, realm, chToken, channelBaseName, text) then return end
 
     if self._tabBuilt then self:RefreshTab() end
+end
+
+function MessageHistory:CollapseDuplicates()
+    local db = store()
+    if (db.version or 1) >= 2 then return 0 end
+    local dropped = 0
+    for _, p in pairs(db.players) do dropped = dropped + collapse(p) end
+    db.version = 2
+    return dropped
 end
 
 function MessageHistory:Prune()
@@ -653,6 +704,7 @@ end
 
 function MessageHistory:OnEnable()
 
+    self:CollapseDuplicates()
     self:Prune()
 
     local lw = NBK:GetModule("ListWindow")

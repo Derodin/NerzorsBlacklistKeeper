@@ -414,12 +414,14 @@ function Recents:RefreshTab()
     if not tabUI.list then return end
     local filter = tabUI.searchEB and tabUI.searchEB:GetText() or ""
     local entries = sortedEntries(self, filter)
+    local L = NBK.L
+    tabUI.list:SetEmptyText(NBK:EmptyListText(filter,
+        L["No recent group members yet. Players you were in a party with show up here."]))
     tabUI.list:SetData(entries)
 
     local total = self:CountEntries()
     local cap   = self:GetMaxEntries()
     local shown = #entries
-    local L = NBK.L
     if shown == total then
         tabUI.countLabel:SetText((L["Recents (%d / %d)"] or "Recents (%d / %d)"):format(total, cap))
     else

@@ -16,4 +16,5 @@ NBK:RegisterLocaleStrings("enUS", {
     ["Clear recents..."]                     = true,
     ["Clear all %d recents entries?"]        = true,
     ["Cleared %d recents entries."]          = true,
+    ["No recent group members yet. Players you were in a party with show up here."] = true,
 }, true)
