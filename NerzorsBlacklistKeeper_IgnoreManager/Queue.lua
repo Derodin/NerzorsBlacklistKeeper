@@ -40,6 +40,25 @@ function IgnoreAllChars:PlannedCount(charKey)
     return n
 end
 
+function IgnoreAllChars:PlannedUse(charKey, count)
+    local ig = NBK.db and NBK.db.ignore
+    local c = ig and ig.chars and ig.chars[charKey]
+    local names = c and c.names or {}
+    local used = count
+    if not used then
+        used = 0
+        for _ in pairs(names) do used = used + 1 end
+    end
+    local q = queueRoot(false)
+    for key, job in pairs(q and q[charKey] or {}) do
+        if not obsolete(key, job) then
+            if job.op == "add" and not names[key] then used = used + 1 end
+            if job.op == "del" and names[key] then used = used - 1 end
+        end
+    end
+    return used
+end
+
 function IgnoreAllChars:_DropObsolete(charKey)
     local q = queueRoot(false)
     local cq = q and q[charKey]

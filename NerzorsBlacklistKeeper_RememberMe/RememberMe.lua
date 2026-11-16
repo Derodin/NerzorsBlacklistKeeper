@@ -836,6 +836,7 @@ function RememberMe:_BuildTab(parent)
     local searchBox = NUL:EditBox(root, {
         width       = 260, height = 26,
         placeholder = L["Search name, realm, reason..."],
+        clearButton = true, clearTooltip = L["Clear search"],
         onTextChanged = function() self:RefreshTab() end,
     })
     searchBox:SetPoint("TOPLEFT")

@@ -247,8 +247,23 @@ local function playerRowBuilder(row)
         end
     end)
     row:HookScript("OnLeave", function() NUL:HideTooltip() end)
-    row:SetScript("OnClick", function(self)
-        if self._entry then IgnoreAllChars:_Pick(self._entry.key) end
+
+    row:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    row:SetScript("OnClick", function(self, button)
+        local e = self._entry
+        if not e then return end
+        IgnoreAllChars:_Pick(e.key)
+        if button == "RightButton" then
+            NUL:ShowMenu(self, IgnoreAllChars:_PlayerMenuItems(e), { anchor = "cursor" })
+        end
+    end)
+    row:SetScript("OnDoubleClick", function(self, button)
+        local e = self._entry
+        if button == "LeftButton" and e and e.bl then
+            NUL:HideMenu()
+            local bt = NBK:GetModule("BlacklistTab")
+            if bt then bt:_ShowEditDialog(e.bl) end
+        end
     end)
 
     return function(r, e)
@@ -505,6 +520,42 @@ function IgnoreAllChars:_Pick(key)
     self:_RefreshDetail()
 end
 
+function IgnoreAllChars:_PlayerMenuItems(e)
+    local L = NBK.L
+    local bt = NBK:GetModule("BlacklistTab")
+    local items = {}
+    if not e.deleted then
+        if e.bl then
+            items[#items + 1] = { label = L["Edit blacklist entry"],
+                                  onClick = function() if bt then bt:_ShowEditDialog(e.bl) end end }
+        else
+            items[#items + 1] = { label = L["Import to NBK"], onClick = function() IgnoreAllChars:ImportRows({ e }) end }
+        end
+        items[#items + 1] = { label = L["Ignore everywhere"],
+                              onClick = function() IgnoreAllChars:ConfirmEverywhere({ e }, "add") end }
+        items[#items + 1] = { label = L["Remove everywhere"],
+                              onClick = function() IgnoreAllChars:ConfirmEverywhere({ e }, "del") end }
+    end
+    items[#items + 1] = { label = L["Copy name"],
+                          onClick = function() if bt then bt.ShowCopyName(e.name, e.realm) end end }
+    return items
+end
+
+function IgnoreAllChars:_ToolItems()
+    local L = NBK.L
+    return {
+        { label = L["Copy list..."], onClick = function() IgnoreAllChars:ShowCopyDialog() end,
+          tooltip = L["Adds the players ignored on one character to others."] },
+        { label = L["Clean up..."], onClick = function() IgnoreAllChars:ShowCleanup() end,
+          tooltip = L["Suggests players to take off the ignore lists."] },
+        { separator = true },
+        { label = L["Export..."], onClick = function() IgnoreAllChars:ShowExportDialog() end,
+          tooltip = L["An ignore list as text, to keep or to share."] },
+        { label = L["Import..."], onClick = function() IgnoreAllChars:ShowImportDialog() end,
+          tooltip = L["Puts the players of an exported ignore list on your characters."] },
+    }
+end
+
 function IgnoreAllChars:_BuildView(parent)
     local L, theme = NBK.L, NUL:GetTheme()
     local f = CreateFrame("Frame", nil, parent)
@@ -514,12 +565,19 @@ function IgnoreAllChars:_BuildView(parent)
     ui.search = NUL:EditBox(f, {
         width = 260, height = 26,
         placeholder = L["Search name, realm, reason..."],
+        clearButton = true, clearTooltip = L["Clear search"],
         onTextChanged = function() IgnoreAllChars:Refresh() end,
     })
     ui.search:SetPoint("TOPLEFT")
 
+    ui.tools = NUL:MenuButton(f, {
+        label = L["Tools"], width = 110, height = 26,
+        items = function() return IgnoreAllChars:_ToolItems() end,
+    })
+    ui.tools:SetPoint("TOPRIGHT", f, "TOPRIGHT", 0, 0)
+
     ui.count = NUL:CreateLabel(f, { text = "", color = theme.colors.text.muted, wrap = false })
-    ui.count:SetPoint("RIGHT", f, "TOPRIGHT", 0, -13)
+    ui.count:SetPoint("RIGHT", ui.tools, "LEFT", -10, 0)
 
     ui.hint = NUL:CreateLabel(f, {
         text  = L["Click a player to see and change every character on the right."],
@@ -545,7 +603,7 @@ function IgnoreAllChars:_BuildView(parent)
     ui.goneLabel:SetPoint("LEFT", 0, 0)
     local cleanBtn = NUL:Button(ui.gone, {
         label = L["Clean up"], width = 110, height = 22,
-        onClick = function() IgnoreAllChars:ConfirmForgetDeleted(ui.goneRows) end,
+        onClick = function() IgnoreAllChars:ShowCleanup("gone") end,
     })
     cleanBtn:SetPoint("RIGHT", 0, 0)
 

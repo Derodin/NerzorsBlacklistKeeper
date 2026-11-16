@@ -555,6 +555,7 @@ function MessageHistory:_BuildTab(parent)
     local searchBox = NUL:EditBox(root, {
         width = 260, height = 26,
         placeholder = L["Search name, realm..."] or "Search name, realm...",
+        clearButton = true, clearTooltip = L["Clear search"],
         onTextChanged = function() MessageHistory:RefreshTab() end,
     })
     searchBox:SetPoint("TOPLEFT")

@@ -189,12 +189,19 @@ function IgnoreAllChars:ConfirmEverywhere(rows, op)
     ui.plan = p
     local del = op == "del"
     f:SetTitle(del and L["Remove everywhere"] or L["Ignore everywhere"])
-    ui.text:SetText((del and L["Remove %d selected players from all characters?"]
-                          or L["Ignore %d selected players on all characters?"]):format(#p.rows))
+
+    if #p.rows == 1 then
+        local who = NBK:DisplayName(p.rows[1].name, p.rows[1].realm)
+        ui.text:SetText((del and L["Remove %s from all characters?"] or L["Ignore %s on all characters?"]):format(who))
+    else
+        ui.text:SetText((del and L["Remove %d selected players from all characters?"]
+                              or L["Ignore %d selected players on all characters?"]):format(#p.rows))
+    end
 
     local lines = {
         L["On this character, right away: %d"]:format(#p.now),
-        L["At the next login on %d other characters: %d"]:format(p.planChars, #p.plan),
+        p.planChars == 1 and L["At the next login on one other character: %d"]:format(#p.plan)
+                          or L["At the next login on %d other characters: %d"]:format(p.planChars, #p.plan),
     }
     if #p.cancel > 0 then lines[#lines + 1] = L["Planned changes cancelled: %d"]:format(#p.cancel) end
     if not del and #p.now > p.free then
@@ -204,7 +211,7 @@ function IgnoreAllChars:ConfirmEverywhere(rows, op)
     ui.details:SetText(table.concat(lines, "\n"))
 
     local askBL = del and p.onBlacklist > 0
-    ui.alsoBL:SetLabel(L["Also remove them from the blacklist (%d)"]:format(p.onBlacklist))
+    ui.alsoBL:SetLabel(NBK:AlsoFromBlacklistLabel(p.onBlacklist))
     ui.alsoBL:SetChecked(false)
     ui.alsoBL:SetShown(askBL)
     ui.pinned:SetText(L["Pinned among them: %d"]:format(p.pinned))

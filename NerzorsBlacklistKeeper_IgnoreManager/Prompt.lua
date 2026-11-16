@@ -107,7 +107,7 @@ function IgnoreAllChars:ShowPrompt()
     ui.text:SetText(L["Changes to this character's ignore list are planned: %d"]:format(#jobs))
     ui.list:SetData(jobs)
 
-    ui.alsoBL:SetLabel(L["Also remove them from the blacklist (%d)"]:format(onBlacklist))
+    ui.alsoBL:SetLabel(NBK:AlsoFromBlacklistLabel(onBlacklist))
     ui.alsoBL:SetChecked(false)
     ui.alsoBL:SetShown(onBlacklist > 0)
     ui.auto:SetChecked(false)
