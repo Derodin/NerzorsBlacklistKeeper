@@ -310,13 +310,14 @@ local function buildHeader(parent, theme, columns)
     local NUL = LibStub("NerzorsUILib-1.0")
     local header = CreateFrame("Frame", nil, parent)
     header:SetHeight(20)
-    NUL:FillBackground(header, theme.colors.bg.panel)
+    NUL:Surface(header, "header")
 
     local cells = {}
     for i, col in ipairs(columns) do
         local cell = CreateFrame("Frame", nil, header)
         cell:SetHeight(20)
         local fs = NUL:CreateLabel(cell, {
+            role     = "column",
 
             text     = col.compact and "" or col.label,
             size     = "sm",
@@ -369,7 +370,8 @@ function Recents:_BuildTab(parent)
     tabUI.searchEB = searchBox
 
     local countLabel = NUL:CreateLabel(root, { text = "", color = theme.colors.text.muted })
-    countLabel:SetPoint("RIGHT")
+
+    countLabel:SetPoint("RIGHT", root, "TOPRIGHT", 0, -13)
     tabUI.countLabel = countLabel
 
     local hintText = NBK.L["Tracks the last %d unique party-mates (party only - not raid)."]

@@ -507,7 +507,7 @@ local function buildHeader(parent, theme, columns)
     local NUL = LibStub("NerzorsUILib-1.0")
     local header = CreateFrame("Frame", nil, parent)
     header:SetHeight(20)
-    NUL:FillBackground(header, theme.colors.bg.panel)
+    NUL:Surface(header, "header")
 
     local cells = {}
     for i, col in ipairs(columns) do
@@ -516,6 +516,7 @@ local function buildHeader(parent, theme, columns)
         local fs = NUL:CreateLabel(cell, {
             text = col.label, size = "sm",
             color = theme.colors.text.muted, justifyH = "LEFT",
+            role = "column",
         })
         fs:SetPoint("LEFT", 0, 0); fs:SetPoint("RIGHT", 0, 0)
         cells[i] = cell
@@ -562,7 +563,8 @@ function MessageHistory:_BuildTab(parent)
     tabUI.searchEB = searchBox
 
     local countLabel = NUL:CreateLabel(root, { text = "", color = theme.colors.text.muted })
-    countLabel:SetPoint("RIGHT")
+
+    countLabel:SetPoint("RIGHT", root, "TOPRIGHT", 0, -13)
     tabUI.countLabel = countLabel
 
     local hint = NUL:CreateLabel(root, {

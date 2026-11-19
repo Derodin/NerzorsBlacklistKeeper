@@ -194,11 +194,12 @@ local function buildListHeader(parent)
     local L, theme = NBK.L, NUL:GetTheme()
     local header = CreateFrame("Frame", nil, parent)
     header:SetHeight(HEADER_HEIGHT)
-    NUL:FillBackground(header, theme.colors.bg.panel)
+    NUL:Surface(header, "header")
 
     local function label(text)
         return NUL:CreateLabel(header, {
             text = text, size = "sm", color = theme.colors.text.muted, justifyH = "LEFT", wrap = false,
+            role = "column",
         })
     end
     local name = label(L["Name"])

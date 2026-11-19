@@ -48,12 +48,16 @@ local function playSound()
     if path and PlaySoundFile then PlaySoundFile(path, "Master") end
 end
 
+local function isSecret(v) return issecretvalue ~= nil and issecretvalue(v) and true or false end
+
 local function resultLeaderEntry(resultID)
-    if not resultID or not C_LFGList or not C_LFGList.GetSearchResultInfo then
+    if not resultID or isSecret(resultID) or not C_LFGList or not C_LFGList.GetSearchResultInfo then
         return nil
     end
-    local info = C_LFGList.GetSearchResultInfo(resultID)
-    if not info or not info.leaderName or info.leaderName == "" then return nil end
+    local ok, info = pcall(C_LFGList.GetSearchResultInfo, resultID)
+    if not ok or type(info) ~= "table" or isSecret(info) then return nil end
+    if isSecret(info.leaderName) then return nil end
+    if not info.leaderName or info.leaderName == "" then return nil end
 
     local name, realm = strsplit("-", info.leaderName, 2)
     if not name or name == "" then return nil end
@@ -103,6 +107,136 @@ local function flagSearchEntry(entry)
     end
 end
 
+local EUI_FOLDER = "EllesmereUIGroupFinder"
+local euiRows   = setmetatable({}, { __mode = "k" })
+local euiFrames = setmetatable({}, { __mode = "k" })
+local euiRecolouring = false
+local euiScanQueued  = false
+local euiHooked      = false
+
+local function isEllesmereRow(r)
+    if type(r) ~= "table" or type(r.IsObjectType) ~= "function" then return false end
+    local okB, isButton = pcall(r.IsObjectType, r, "Button")
+    if not okB or not isButton then return false end
+    return type(r.line3) == "table" and type(r.name) == "table"
+       and type(r.name.SetTextColor) == "function" and r.mid ~= nil
+end
+
+local function ensureStripe(row)
+    if row._nbkStripe then return row._nbkStripe end
+    local t = row:CreateTexture(nil, "OVERLAY", nil, 7)
+    t:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+    t:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 0)
+    t:SetWidth(3)
+    t:SetColorTexture(RED[1], RED[2], RED[3], 1)
+    row._nbkStripe = t
+    return t
+end
+
+local function flagEllesmereRow(row)
+    if euiRecolouring then return end
+    local active = isEnabled() and S().flagSearchResults ~= false
+    local name = active and row.resultID and resultLeaderEntry(row.resultID)
+    if name then
+        ensureStripe(row):Show()
+        euiRecolouring = true
+        row.name:SetTextColor(RED[1], RED[2], RED[3])
+        euiRecolouring = false
+    elseif row._nbkStripe then
+        row._nbkStripe:Hide()
+    end
+end
+
+local scanSoon
+
+local function scanEllesmereRows()
+    euiScanQueued = false
+    local sp = _G.LFGListFrame and _G.LFGListFrame.SearchPanel
+    if not sp or type(sp.GetChildren) ~= "function" then return end
+    for _, frame in ipairs({ sp:GetChildren() }) do
+        for _, body in ipairs({ frame:GetChildren() }) do
+            for _, row in ipairs({ body:GetChildren() }) do
+                if isEllesmereRow(row) then
+                    if not euiRows[row] then
+                        euiRows[row] = true
+                        hooksecurefunc(row.name, "SetTextColor", function() flagEllesmereRow(row) end)
+                    end
+                    if not euiFrames[frame] then
+
+                        euiFrames[frame] = true
+                        frame:HookScript("OnMouseWheel", function() scanSoon() end)
+                        frame:HookScript("OnSizeChanged", function() scanSoon() end)
+                    end
+                    flagEllesmereRow(row)
+                end
+            end
+        end
+    end
+end
+
+scanSoon = function()
+    if euiScanQueued then return end
+    euiScanQueued = true
+    if C_Timer and C_Timer.After then
+        C_Timer.After(0, scanEllesmereRows)
+    else
+        scanEllesmereRows()
+    end
+end
+
+local function isAddOnLoaded(name)
+    if C_AddOns and C_AddOns.IsAddOnLoaded then return C_AddOns.IsAddOnLoaded(name) and true or false end
+    return IsAddOnLoaded and IsAddOnLoaded(name) and true or false
+end
+
+function GroupFinder:EllesmereActive()
+    return isAddOnLoaded(EUI_FOLDER)
+end
+
+function GroupFinder:EllesmereState()
+    local rows, flagged = 0, 0
+    for row in pairs(euiRows) do
+        rows = rows + 1
+        if row._nbkStripe and row._nbkStripe:IsShown() and row:IsShown() then flagged = flagged + 1 end
+    end
+    return self:EllesmereActive(), euiHooked, rows, flagged
+end
+
+local function hookEllesmere()
+    if euiHooked or not GroupFinder:EllesmereActive() then return end
+    if not _G.LFGListFrame or not _G.LFGListFrame.SearchPanel then return end
+    euiHooked = true
+    if _G.LFGListSearchPanel_UpdateResults then
+        hooksecurefunc("LFGListSearchPanel_UpdateResults", scanSoon)
+    end
+    _G.LFGListFrame.SearchPanel:HookScript("OnShow", scanSoon)
+    scanSoon()
+end
+
+local ALERT = "|TInterface\\DialogFrame\\UI-Dialog-Icon-AlertNew:14:14|t"
+
+local function warnLine(name, realm, reason)
+    return ("%s |cffff6666%s:|r %s-%s - %s"):format(ALERT, NBK.L["Blacklisted"], name, realm, reason)
+end
+
+local function reasonText(entry)
+    local L = NBK.L
+    return (entry.reason and entry.reason ~= "")
+        and (NBK.ReasonText and NBK:ReasonText(entry.reason) or entry.reason)
+        or L["no reason logged"]
+end
+
+local function onSearchEntryTooltip(tooltip, resultID)
+    if not tooltip or type(tooltip.AddLine) ~= "function" then return end
+    if not isEnabled() or S().flagSearchResults == false then return end
+    local name, realm, entry = resultLeaderEntry(resultID)
+    if not name then return end
+    tooltip:AddLine(" ")
+    tooltip:AddLine(warnLine(name, realm, reasonText(entry)), 1, 1, 1, true)
+    if tooltip.Show then tooltip:Show() end
+end
+GroupFinder._onSearchEntryTooltip = onSearchEntryTooltip
+
 local function hideApplyBanner()
     local dlg = _G.LFGListApplicationDialog
     if dlg and dlg._nbkWarn then dlg._nbkWarn:Hide() end
@@ -138,11 +272,7 @@ local function showApplyBanner(dlg, name, realm, entry)
         dlg._nbkWarn = banner
     end
 
-    local reason = (entry.reason and entry.reason ~= "")
-                 and (NBK.ReasonText and NBK:ReasonText(entry.reason) or entry.reason)
-                 or L["no reason logged"]
-    dlg._nbkWarn.label:SetText(("|cffff6666⚠ %s:|r %s-%s - %s"):format(
-        L["Blacklisted"], name, realm, reason))
+    dlg._nbkWarn.label:SetText(warnLine(name, realm, reasonText(entry)))
     dlg._nbkWarn:Show()
 end
 
@@ -219,10 +349,14 @@ function GroupFinder:RefreshVisibleResults()
     if scrollBox and scrollBox.ForEachFrame then
         scrollBox:ForEachFrame(function(entry) flagSearchEntry(entry) end)
     end
+    for row in pairs(euiRows) do flagEllesmereRow(row) end
 end
 
-function GroupFinder:OnEnable()
-    if not C_LFGList then return end
+local uiHooked = false
+local function hookGroupFinderUI()
+    if uiHooked then return true end
+    if not _G.LFGListFrame then return false end
+    uiHooked = true
 
     if _G.LFGListSearchEntry_Update then
         hooksecurefunc("LFGListSearchEntry_Update", flagSearchEntry)
@@ -233,6 +367,39 @@ function GroupFinder:OnEnable()
     end
     if _G.LFGListApplicationDialog then
         LFGListApplicationDialog:HookScript("OnHide", onApplicationDialogHide)
+    end
+
+    hookEllesmere()
+
+    if _G.LFGListUtil_SetSearchEntryTooltip then
+        hooksecurefunc("LFGListUtil_SetSearchEntryTooltip", onSearchEntryTooltip)
+    end
+    return true
+end
+GroupFinder._hookGroupFinderUI = hookGroupFinderUI
+
+function GroupFinder:OnEnable()
+    if not C_LFGList then return end
+
+    if not hookGroupFinderUI() then
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("ADDON_LOADED")
+        f:SetScript("OnEvent", function(self, _, name)
+            if name == "Blizzard_GroupFinder" or name == EUI_FOLDER then
+                if hookGroupFinderUI() then self:UnregisterAllEvents() end
+            end
+        end)
+    end
+
+    if not euiHooked then
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("ADDON_LOADED")
+        f:SetScript("OnEvent", function(self, _, name)
+            if name == EUI_FOLDER or name == "Blizzard_GroupFinder" then
+                hookEllesmere()
+                if euiHooked then self:UnregisterAllEvents() end
+            end
+        end)
     end
 
     NBK:RegisterEvent("LFG_LIST_APPLICANT_LIST_UPDATED", checkAllApplicants)

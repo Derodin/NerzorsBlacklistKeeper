@@ -1,15 +1,52 @@
 local NBK = _G.NBK
 if not NBK then return end
 
+local function rekeyEntries(db)
+    if type(db) ~= "table" or type(db.entries) ~= "table" then return end
+    local out = {}
+    for oldKey, e in pairs(db.entries) do
+        local key, _, realm
+        if type(e) == "table" and type(e.name) == "string" then
+            key, _, realm = NBK:NormalizeKey(e.name, e.realm or "")
+        end
+        if not key then
+            out[oldKey] = e
+        else
+            e.realm = realm
+            local other = out[key]
+            if not other then
+                out[key] = e
+            else
+                local newer, older = e, other
+                if (other.addedAt or 0) > (e.addedAt or 0) then newer, older = other, e end
+                local a, b = newer.notes or "", older.notes or ""
+                if b ~= "" and b ~= a then
+                    newer.notes = (a ~= "") and (a .. " / " .. b) or b
+                end
+                out[key] = newer
+            end
+        end
+    end
+    db.entries = out
+end
+
 NBK:RegisterAddonDB({
     addonName = "NerzorsBlacklistKeeper_RememberMe",
     key       = "RememberMe",
     svName    = "NerzorsBlacklistKeeperRememberMeDB",
-    version   = 1,
+
+    version   = 2,
+    migrate   = function(db, fromVer)
+        if (fromVer or 1) < 2 then rekeyEntries(db) end
+    end,
     defaults  = {
         settings = {
             showTooltip   = true,
             promptOnMplus = true,
+
+            promptOnLeave       = false,
+            promptOnMemberLeave = false,
+            promptInRaid        = false,
             defaultRating = 4,
         },
         entries = {},
@@ -18,24 +55,26 @@ NBK:RegisterAddonDB({
 
 local RememberMe = NBK:RegisterModule("RememberMe")
 
+RememberMe.HAS_MPLUS = (NBK.IsRetail and NBK:IsRetail() or false)
+    and type(C_ChallengeMode) == "table"
+
 local function formatDate(ts)
     return NBK:FormatDate(ts)
 end
 
 local function normalizeKey(name, realm)
-
-    if not name then return nil end
-    realm = realm or GetNormalizedRealmName() or ""
-    name  = name:gsub("%s+$", ""):gsub("^%s+", "")
-    realm = realm:gsub("%s+$", ""):gsub("^%s+", "")
-    return (name .. "-" .. realm):lower()
+    return (NBK:NormalizeKey(name, realm))
 end
 
 local function splitNameRealm(input)
-    if type(input) ~= "string" or input == "" then return nil end
+    if type(input) ~= "string" then return nil end
+    input = (strtrim(input):gsub("%s+", " "))
+    if input == "" then return nil end
     local n, r = strsplit("-", input, 2)
-    if not n or n == "" then return nil end
-    if not r or r == "" then r = GetNormalizedRealmName() or "" end
+    n = n and strtrim(n) or ""
+    if n == "" then return nil end
+    if r then r = strtrim(r) end
+    if r == "" then r = nil end
     return n, r
 end
 
@@ -78,8 +117,7 @@ local function promptBlacklistConflict(name, realm)
     local L   = NBK.L
     if not NBK:IsBlacklisted(name, realm) then return end
     NUL:Confirm({
-        text = (L["%s-%s is on the Blacklist. Remove from Blacklist?"]
-                or "%s-%s is on the Blacklist. Remove from Blacklist?"):format(name, realm),
+        text = L["%s is on the Blacklist. Remove from Blacklist?"]:format(NBK:DisplayName(name, realm)),
         onAccept = function()
             NBK:RemovePlayer(name, realm)
             local lw = NBK:GetModule("ListWindow")
@@ -93,8 +131,7 @@ local function promptRememberMeConflict(name, realm)
     local L   = NBK.L
     if not RememberMe:HasEntry(name, realm) then return end
     NUL:Confirm({
-        text = (L["%s-%s is in Remember Me. Remove from Remember Me?"]
-                or "%s-%s is in Remember Me. Remove from Remember Me?"):format(name, realm),
+        text = L["%s is in Remember Me. Remove from Remember Me?"]:format(NBK:DisplayName(name, realm)),
         onAccept = function() RememberMe:RemoveEntry(name, realm) end,
     })
 end
@@ -107,11 +144,13 @@ function RememberMe:AddEntry(name, realm, fields)
         if not n then return nil, "invalid name" end
         name, realm = n, r
     end
-    if not name or name == "" then return nil, "name required" end
-    realm = realm or GetNormalizedRealmName() or ""
 
-    local key = normalizeKey(name, realm)
+    if type(name) == "string" then name = (strtrim(name):gsub("%s+", " ")) end
+    if not name or name == "" then return nil, "name required" end
+
+    local key, cleanName, cleanRealm = NBK:NormalizeKey(name, realm)
     if not key then return nil, "invalid name/realm" end
+    name, realm = cleanName, cleanRealm
 
     local list = entriesTable()
     local entry = list[key]
@@ -129,7 +168,8 @@ function RememberMe:AddEntry(name, realm, fields)
             role       = fields.role,
             addedAt    = now,
             zone       = fields.zone or (GetRealZoneText() or GetZoneText() or ""),
-            addedBy    = (UnitName("player") or "?") .. "-" .. (GetNormalizedRealmName() or ""),
+            addedBy    = NBK:PlayerFullName() or "?",
+            run        = fields.run or (NBK.CurrentRun and NBK:CurrentRun()) or nil,
         }
         list[key] = entry
 
@@ -140,6 +180,8 @@ function RememberMe:AddEntry(name, realm, fields)
     if fields.rating ~= nil then entry.rating = tonumber(fields.rating) or entry.rating end
     if fields.notes  ~= nil then entry.notes  = fields.notes end
     if fields.zone   ~= nil then entry.zone   = fields.zone end
+
+    if fields.run    ~= nil then entry.run    = fields.run end
     if fields.class  ~= nil then
         entry.class      = fields.class
         entry.classColor = NBK:GetClassHex(fields.class)
@@ -201,6 +243,7 @@ if NBK.RegisterListType then
                 tostring(e.addedAt or 0),
                 e.zone or "",
                 e.addedBy or "",
+                e.run or "",
             }
         end,
 
@@ -216,6 +259,7 @@ if NBK.RegisterListType then
                 addedAt = tonumber(fields[7]) or time(),
                 zone    = fields[8] or "",
                 addedBy = fields[9] or "",
+                run     = (fields[10] ~= nil and fields[10] ~= "") and fields[10] or nil,
             }
             entry.classColor = entry.class and NBK:GetClassHex(entry.class) or nil
             return entry
@@ -228,8 +272,9 @@ if NBK.RegisterListType then
 
         applyEntry = function(entry, mode)
             local list = entriesTable()
-            local key  = normalizeKey(entry.name, entry.realm)
+            local key, _, realm = NBK:NormalizeKey(entry.name, entry.realm)
             if not key then return "skipped" end
+            entry.realm = realm
             if list[key] then
                 if mode == "overwrite" then
                     list[key] = entry
@@ -342,7 +387,7 @@ local function onTooltipSetUnit(tooltip)
     if not UnitExists("mouseover") then return end
     if not UnitIsPlayer("mouseover") then return end
 
-    local name, realm = UnitName("mouseover")
+    local name, realm = NBK:UnitPlayer("mouseover")
     if not name then return end
     realm = realm or GetNormalizedRealmName()
 
@@ -368,6 +413,10 @@ local function onTooltipSetUnit(tooltip)
         tooltip:AddLine(DIM .. (L["Added in"] or "Added in") .. ":|r " .. entry.zone,
             0.75, 0.8, 0.75, true)
     end
+    if type(entry.run) == "string" and entry.run ~= "" then
+        tooltip:AddLine(DIM .. (L["Run"] or "Run") .. ":|r " .. entry.run,
+            0.75, 0.8, 0.75, true)
+    end
     tooltip:Show()
 end
 
@@ -380,7 +429,7 @@ local function buildRememberMeContextActions(rootDescription, name, realm, unit,
         end)
         rootDescription:CreateButton(L["Remove from Remember Me"] or "Remove from Remember Me", function()
             LibStub("NerzorsUILib-1.0"):Confirm({
-                text = (L["Remove %s-%s from Remember Me?"] or "Remove %s-%s from Remember Me?"):format(name, realm or ""),
+                text = L["Remove %s from Remember Me?"]:format(NBK:DisplayName(name, realm)),
                 onAccept = function()
                     RememberMe:RemoveEntry(name, realm)
                     local lw = NBK:GetModule("ListWindow")
@@ -396,7 +445,7 @@ local function buildRememberMeContextActions(rootDescription, name, realm, unit,
                 class = classFile
             end
             RememberMe:ShowAddDialog({
-                name  = name .. "-" .. (realm or ""),
+                name  = NBK:DisplayName(name, realm),
                 class = class,
             })
         end)
@@ -428,6 +477,7 @@ local function buildDialog(globalName, titleKey)
     local nameLabel = NUL:CreateLabel(content, {
         text  = (L["Name"] or "Name") .. " (Name-Realm)",
         color = theme.colors.text.muted,
+        role  = "field",
     })
     nameLabel:SetPoint("TOPLEFT", 0, y); y = y - 16
 
@@ -437,6 +487,7 @@ local function buildDialog(globalName, titleKey)
     local ratingLabel = NUL:CreateLabel(content, {
         text  = L["Rating"] or "Rating",
         color = theme.colors.text.muted,
+        role  = "field",
     })
     ratingLabel:SetPoint("TOPLEFT", 0, y); y = y - 18
 
@@ -446,6 +497,7 @@ local function buildDialog(globalName, titleKey)
     local notesLabel = NUL:CreateLabel(content, {
         text  = L["Notes"] or "Notes",
         color = theme.colors.text.muted,
+        role  = "field",
     })
     notesLabel:SetPoint("TOPLEFT", 0, y); y = y - 16
 
@@ -460,6 +512,7 @@ local function buildDialog(globalName, titleKey)
     local roleLabel = NUL:CreateLabel(content, {
         text  = L["Role"] or "Role",
         color = theme.colors.text.muted,
+        role  = "field",
     })
     roleLabel:SetPoint("TOPLEFT", 0, y); y = y - 18
 
@@ -552,6 +605,7 @@ function RememberMe:ShowAddDialog(prefill)
             notes  = values.notes,
             role   = values.role,
             class  = (prefill and prefill.class) or nil,
+            run    = (prefill and prefill.run) or nil,
         })
         if not entry then return false, status end
         self:RefreshTab()
@@ -569,7 +623,7 @@ function RememberMe:ShowEditDialog(entry)
     local d = dialogState.edit
     d:SetNameEditable(false)
     d:SetValues({
-        name   = (entry.name or "") .. "-" .. (entry.realm or ""),
+        name   = NBK:DisplayName(entry.name, entry.realm),
         notes  = entry.notes,
         rating = entry.rating,
         role   = entry.role,
@@ -591,19 +645,44 @@ end
 local ROW_HEIGHT = 26
 local OPTIONS_W  = 70
 
+local RUN_MIN_W   = 90
+local RUN_MAX_W   = 220
+local NOTES_MIN_W = 120
+
 local tabUI = {}
+
+local function runWidthFor(runs, measure, rowWidth, label)
+    local want = (label and measure(label) or 0) + 16
+    for _, r in ipairs(runs) do
+        local w = measure(r) + 12
+        if w > want then want = w end
+    end
+    want = math.ceil(want)
+    if want < RUN_MIN_W then want = RUN_MIN_W end
+    if want > RUN_MAX_W then want = RUN_MAX_W end
+    if rowWidth and rowWidth > 0 then
+
+        local room = rowWidth - (26 + 170 + 80 + 80 + OPTIONS_W) - (7 * 4) - 8 - NOTES_MIN_W
+        if want > room then want = math.max(RUN_MIN_W, math.floor(room)) end
+    end
+    return want
+end
+RememberMe._runWidthFor = runWidthFor
 
 local function lc(s) return (s or ""):lower() end
 
 local function sortedEntries(filter, sortKey, sortDir)
     local out = {}
     filter = filter and filter:lower() or ""
+
+    local byRealm = not NBK:IsForever()
     for _, e in pairs(entriesTable()) do
         if filter == ""
            or (e.name or ""):lower():find(filter, 1, true)
-           or (e.realm or ""):lower():find(filter, 1, true)
+           or (byRealm and (e.realm or ""):lower():find(filter, 1, true))
            or (e.notes or ""):lower():find(filter, 1, true)
-           or (e.zone or ""):lower():find(filter, 1, true) then
+           or (e.zone or ""):lower():find(filter, 1, true)
+           or (e.run or ""):lower():find(filter, 1, true) then
             table.insert(out, e)
         end
     end
@@ -621,6 +700,8 @@ local function sortedEntries(filter, sortKey, sortDir)
             va, vb = lc(a.class), lc(b.class)
         elseif sortKey == "zone" then
             va, vb = lc(a.zone), lc(b.zone)
+        elseif sortKey == "run" then
+            va, vb = lc(a.run), lc(b.run)
         else
             va, vb = lc(a.name), lc(b.name)
         end
@@ -668,6 +749,9 @@ local function makeRowBuilder()
         cells.rating = NUL:CreateLabel(row, { text = "", justifyH = "LEFT" })
         cells.notes  = NUL:CreateLabel(row, { text = "", size = "sm", color = theme.colors.text.muted, justifyH = "LEFT", wrap = false })
         cells.added  = NUL:CreateLabel(row, { text = "", size = "sm", color = theme.colors.text.muted, justifyH = "LEFT", wrap = false })
+        if RememberMe.HAS_MPLUS then
+            cells.run = NUL:CreateLabel(row, { text = "", justifyH = "LEFT", wrap = false })
+        end
         cells.opts   = buildOptionsCell(row, theme)
 
         local function layout(totalWidth)
@@ -676,6 +760,10 @@ local function makeRowBuilder()
             cells.name:ClearAllPoints();   cells.name:SetWidth(170);   cells.name:SetPoint("LEFT", row, "LEFT", x, 0); x = x + 170 + 4
             cells.rating:ClearAllPoints(); cells.rating:SetWidth(80);  cells.rating:SetPoint("LEFT", row, "LEFT", x, 0); x = x + 80 + 4
             cells.added:ClearAllPoints();  cells.added:SetWidth(80);   cells.added:SetPoint("LEFT", row, "LEFT", x, 0); x = x + 80 + 4
+            if cells.run then
+                local rw = tabUI.runWidth or RUN_MIN_W
+                cells.run:ClearAllPoints(); cells.run:SetWidth(rw); cells.run:SetPoint("LEFT", row, "LEFT", x, 0); x = x + rw + 4
+            end
 
             local fixedRight = OPTIONS_W + 8
             local notesW = math.max(60, totalWidth - x - fixedRight - 4)
@@ -690,11 +778,12 @@ local function makeRowBuilder()
             cells.class:SetClass(entry.class or "WARRIOR", "midnight")
 
             local hex = entry.classColor or (entry.class and NBK:GetClassHex(entry.class)) or "ffffff"
-            cells.name:SetText(("|cff%s%s|r-%s"):format(hex, entry.name or "?", entry.realm or ""))
+            cells.name:SetText(NBK:DisplayName(entry.name, entry.realm, hex))
 
             cells.rating:SetText(ratingString(entry.rating))
             cells.notes:SetText(entry.notes or "")
             cells.added:SetText(formatDate(entry.addedAt))
+            if cells.run then cells.run:SetText(entry.run or "") end
 
             cells.opts.edit:SetScript("OnClick", function()
                 RememberMe:ShowEditDialog(entry)
@@ -702,8 +791,7 @@ local function makeRowBuilder()
             cells.opts.remove:SetScript("OnClick", function()
                 local L = NBK.L
                 LibStub("NerzorsUILib-1.0"):Confirm({
-                    text = (L["Remove %s-%s from Remember Me?"] or "Remove %s-%s from Remember Me?")
-                            :format(entry.name or "?", entry.realm or ""),
+                    text = L["Remove %s from Remember Me?"]:format(NBK:DisplayName(entry.name, entry.realm)),
                     onAccept = function()
                         RememberMe:RemoveEntry(entry.name, entry.realm)
                         RememberMe:RefreshTab()
@@ -718,7 +806,7 @@ local function buildHeader(parent, theme, columns, self_ref)
     local NUL = LibStub("NerzorsUILib-1.0")
     local header = CreateFrame("Frame", nil, parent)
     header:SetHeight(20)
-    NUL:FillBackground(header, theme.colors.bg.panel)
+    NUL:Surface(header, "header")
 
     header._cells = {}
     header._cols  = columns
@@ -758,6 +846,7 @@ local function buildHeader(parent, theme, columns, self_ref)
         cell._col = col
 
         local fs = NUL:CreateLabel(cell, {
+            role     = "column",
             text     = col.label,
             size     = "sm",
             color    = theme.colors.text.muted,
@@ -823,7 +912,8 @@ function RememberMe:_BuildTab(parent)
         self.sortKey, self.sortDir = "rating", "desc"
         if NBK.GetSavedSort then
             local key, dir = NBK:GetSavedSort("remember_me", "rating", "desc")
-            if key == "class" or key == "name" or key == "rating" or key == "added" then
+            if key == "class" or key == "name" or key == "rating" or key == "added"
+                or (key == "run" and RememberMe.HAS_MPLUS) then
                 self.sortKey, self.sortDir = key, dir
             end
         end
@@ -849,8 +939,18 @@ function RememberMe:_BuildTab(parent)
     })
     addBtn:SetPoint("LEFT", searchBox, "RIGHT", 8, 0)
 
+    local rateBtn = NUL:Button(root, {
+        label   = L["Rate group"],
+        height  = 26,
+        tooltip = L["Rate the players in your party. Only in a party - not alone and not in a raid."],
+        onClick = function() self:RateGroup() end,
+    })
+    rateBtn:SetPoint("LEFT", addBtn, "RIGHT", 8, 0)
+    tabUI.rateBtn = rateBtn
+
     local countLabel = NUL:CreateLabel(root, { text = "", color = theme.colors.text.muted })
-    countLabel:SetPoint("RIGHT")
+
+    countLabel:SetPoint("RIGHT", root, "TOPRIGHT", 0, -13)
     tabUI.countLabel = countLabel
 
     local columns = {
@@ -861,6 +961,12 @@ function RememberMe:_BuildTab(parent)
         { key = "notes",  label = L["Notes"]  or "Notes",            width = 0,   flex = true,  sortable = false },
         { key = "opts",   label = L["Options"] or "Options",         width = OPTIONS_W, sortable = false },
     }
+    if RememberMe.HAS_MPLUS then
+
+        local runCol = { key = "run", label = L["Run"] or "Run", width = tabUI.runWidth or RUN_MIN_W, sortable = true }
+        table.insert(columns, 5, runCol)
+        tabUI.runCol = runCol
+    end
 
     local header = buildHeader(root, theme, columns, self)
     header:SetPoint("TOPLEFT", searchBox, "BOTTOMLEFT", 0, -8)
@@ -876,8 +982,9 @@ function RememberMe:_BuildTab(parent)
     tabUI.list = list
 
     local emptyText = NUL:CreateLabel(root, {
-        text  = L["No entries yet - finish a Mythic+ run to remember your party-mates."]
-                or "No entries yet - finish a Mythic+ run to remember your party-mates.",
+        text  = RememberMe.HAS_MPLUS
+                and L["No entries yet - finish a Mythic+ run to remember your party-mates."]
+                or  L["No entries yet - right-click a player or rate your group to remember them."],
         size  = "sm",
         color = theme.colors.text.muted,
     })
@@ -912,6 +1019,32 @@ function RememberMe:RefreshTab()
     if not tabUI.list then return end
     local filter = tabUI.searchEB and tabUI.searchEB:GetText() or ""
     local entries = sortedEntries(filter, self.sortKey, self.sortDir)
+
+    if tabUI.runCol then
+        if not tabUI.runMeasure then
+            local NUL = LibStub("NerzorsUILib-1.0")
+            tabUI.runMeasure = NUL:CreateLabel(tabUI.root, { text = "", wrap = false })
+            tabUI.runMeasure:Hide()
+        end
+        local fs = tabUI.runMeasure
+        local function measure(text) fs:SetText(text); return tonumber(fs:GetStringWidth()) or 0 end
+        local seen, runs = {}, {}
+        for _, e in pairs(entriesTable()) do
+            local r = e.run
+            if type(r) == "string" and r ~= "" and not seen[r] then
+                seen[r] = true
+                runs[#runs + 1] = r
+            end
+        end
+        local headerW = tabUI.header and tonumber(tabUI.header:GetWidth()) or 0
+        local w = runWidthFor(runs, measure, headerW, tabUI.runCol.label)
+        tabUI.runWidth = w
+        if tabUI.runCol.width ~= w then
+            tabUI.runCol.width = w
+            if tabUI.header and tabUI.header._layout then tabUI.header._layout() end
+        end
+    end
+
     tabUI.list:SetData(entries)
 
     local total = self:CountEntries()
@@ -926,6 +1059,7 @@ function RememberMe:RefreshTab()
     if tabUI.emptyText then
         if total == 0 then tabUI.emptyText:Show() else tabUI.emptyText:Hide() end
     end
+    if tabUI.rateBtn then tabUI.rateBtn:SetEnabled(self:CanRateGroup()) end
 end
 
 local function buildConfigTab(parent)
@@ -949,12 +1083,35 @@ local function buildConfigTab(parent)
     })
     tipCB:SetPoint("TOPLEFT", 0, y); y = y - 26
 
-    local mpCB = NUL:Checkbox(panel, {
-        label    = L["Prompt after Mythic+ runs"] or "Prompt after Mythic+ runs",
-        checked  = s.promptOnMplus ~= false,
-        onChange = function(v) settings().promptOnMplus = v and true or false end,
+    if RememberMe.HAS_MPLUS then
+        local mpCB = NUL:Checkbox(panel, {
+            label    = L["Prompt after Mythic+ runs"] or "Prompt after Mythic+ runs",
+            checked  = s.promptOnMplus ~= false,
+            onChange = function(v) settings().promptOnMplus = v and true or false end,
+        })
+        mpCB:SetPoint("TOPLEFT", 0, y); y = y - 26
+    end
+
+    local leaveCB = NUL:Checkbox(panel, {
+        label    = L["Ask when I leave a group"],
+        checked  = s.promptOnLeave == true,
+        onChange = function(v) settings().promptOnLeave = v and true or false end,
     })
-    mpCB:SetPoint("TOPLEFT", 0, y); y = y - 26
+    leaveCB:SetPoint("TOPLEFT", 0, y); y = y - 26
+
+    local mateCB = NUL:Checkbox(panel, {
+        label    = L["Ask when someone leaves the group"],
+        checked  = s.promptOnMemberLeave == true,
+        onChange = function(v) settings().promptOnMemberLeave = v and true or false end,
+    })
+    mateCB:SetPoint("TOPLEFT", 0, y); y = y - 26
+
+    local raidCB = NUL:Checkbox(panel, {
+        label    = L["Also in raids (when someone leaves)"],
+        checked  = s.promptInRaid == true,
+        onChange = function(v) settings().promptInRaid = v and true or false end,
+    })
+    raidCB:SetPoint("TOPLEFT", 16, y); y = y - 26
 
     local rLabel = NUL:CreateLabel(panel, {
         text  = L["Default rating"] or "Default rating",
@@ -1002,16 +1159,25 @@ end
 
 local mplusPopup
 
+function RememberMe.FormatRunTime(ms)
+    if type(ms) ~= "number" or ms <= 0 then return nil end
+    local s = math.floor(ms / 1000)
+    local h, m = math.floor(s / 3600), math.floor((s % 3600) / 60)
+    s = s % 60
+    if h > 0 then return ("%d:%02d:%02d"):format(h, m, s) end
+    return ("%d:%02d"):format(m, s)
+end
+
 local function captureCurrentPartyMembers()
     local list = {}
     if not IsInGroup(LE_PARTY_CATEGORY_HOME) then return list end
     if IsInRaid() then return list end
 
-    local myName = UnitName("player")
+    local myName = NBK:PlayerName()
     for i = 1, GetNumGroupMembers() do
         local unit = "party" .. i
         if UnitExists(unit) and UnitIsPlayer(unit) then
-            local name, realm = UnitName(unit)
+            local name, realm = NBK:UnitPlayer(unit)
 
             if name and name ~= myName then
                 realm = realm or GetNormalizedRealmName()
@@ -1023,13 +1189,34 @@ local function captureCurrentPartyMembers()
     return list
 end
 
-local function captureMplusInfo()
-    if not C_ChallengeMode or not C_ChallengeMode.GetCompletionInfo then return nil end
-    local info = { C_ChallengeMode.GetCompletionInfo() }
+local function readCompletionInfo()
+    local CM = C_ChallengeMode
+    if type(CM) ~= "table" then return nil end
+    if type(CM.GetChallengeCompletionInfo) == "function" then
+        local ok, t = pcall(CM.GetChallengeCompletionInfo)
+        if ok and type(t) == "table" then
+            return t.mapChallengeModeID, t.level, t.time, t.onTime
+        end
+    end
+    if type(CM.GetCompletionInfo) == "function" then
+        local ok, mapID, level, timeMs, onTime = pcall(CM.GetCompletionInfo)
+        if ok then return mapID, level, timeMs, onTime end
+    end
+    return nil
+end
 
-    local mapID, level, timeMs, onTime = info[1], info[2], info[3], info[4]
-    if not mapID or mapID == 0 then return nil end
-    local mapName = (C_ChallengeMode.GetMapUIInfo and C_ChallengeMode.GetMapUIInfo(mapID)) or ""
+local function captureMplusInfo()
+    local mapID, level, timeMs, onTime = readCompletionInfo()
+    if issecretvalue and (issecretvalue(mapID) or issecretvalue(level)
+        or issecretvalue(timeMs) or issecretvalue(onTime)) then return nil end
+    if type(mapID) ~= "number" or mapID == 0 then return nil end
+    if type(level) ~= "number" then level = nil end
+    if type(timeMs) ~= "number" then timeMs = nil end
+    local mapName = ""
+    if type(C_ChallengeMode.GetMapUIInfo) == "function" then
+        local ok, n = pcall(C_ChallengeMode.GetMapUIInfo, mapID)
+        if ok and type(n) == "string" and not (issecretvalue and issecretvalue(n)) then mapName = n end
+    end
     return {
         mapID    = mapID,
         mapName  = mapName,
@@ -1094,11 +1281,14 @@ local function buildMplusPopup()
 
         if info then
             local resultText = info.onTime and (L["timed"] or "timed") or (L["depleted"] or "depleted")
-            self.subtitle:SetText(
-                (L["%s +%d - %s"] or "%s +%d - %s"):format(
-                    info.mapName ~= "" and info.mapName or "?",
-                    info.level or 0,
-                    resultText))
+            local text = (L["%s +%d - %s"] or "%s +%d - %s"):format(
+                info.mapName ~= "" and info.mapName or "?",
+                info.level or 0,
+                resultText)
+
+            local clock = RememberMe.FormatRunTime(info.timeMs)
+            if clock then text = text .. " (" .. clock .. ")" end
+            self.subtitle:SetText(text)
         else
             self.subtitle:SetText("")
         end
@@ -1122,7 +1312,7 @@ local function buildMplusPopup()
 
             local hex = (m.class and NBK:GetClassHex(m.class)) or "ffffff"
             local nameLbl = NUL:CreateLabel(row, {
-                text     = ("|cff%s%s|r-%s"):format(hex, m.name or "?", m.realm or ""),
+                text     = NBK:DisplayName(m.name, m.realm, hex),
                 justifyH = "LEFT",
                 wrap     = false,
             })
@@ -1133,11 +1323,12 @@ local function buildMplusPopup()
                 label = starIcon(13) .. " " .. (L["Remember Me"] or "Remember Me"),
                 width = 130, height = 22, style = "accent",
                 onClick = function()
+
                     RememberMe:ShowAddDialog({
-                        name   = m.name .. "-" .. m.realm,
+                        name   = NBK:DisplayName(m.name, m.realm),
                         class  = m.class,
                         rating = settings().defaultRating or 4,
-                        notes  = info and (("%s +%d"):format(info.mapName or "", info.level or 0)) or nil,
+                        run    = info and NBK.FormatRun and NBK:FormatRun(info.mapName, info.level) or nil,
                     })
                 end,
             })
@@ -1149,9 +1340,11 @@ local function buildMplusPopup()
                 onClick = function()
                     local lw = NBK:GetModule("ListWindow")
                     if lw and lw.ShowAddDialog then
+
                         lw:ShowAddDialog({
-                            name  = m.name .. "-" .. m.realm,
+                            name  = NBK:DisplayName(m.name, m.realm),
                             class = m.class,
+                            zone  = info and NBK.FormatRun and NBK:FormatRun(info.mapName, info.level) or nil,
                         })
                     end
                 end,
@@ -1175,8 +1368,154 @@ local function showMplusPopup(info, members)
     if #members == 0 then return end
 
     local f = buildMplusPopup()
+    f._mode = "mplus"
+    f:SetTitle(NBK.L["Mythic+ run finished"])
     f:SetData(info, members)
     f:Show()
+end
+
+function RememberMe:CanRateGroup()
+    return (IsInGroup(LE_PARTY_CATEGORY_HOME) and not IsInRaid()) and true or false
+end
+
+function RememberMe:RateGroup()
+    local L = NBK.L
+    local members = self:CanRateGroup() and captureCurrentPartyMembers() or {}
+    if #members == 0 then
+        NBK:Print(L["Rate the players in your party. Only in a party - not alone and not in a raid."])
+        return false
+    end
+    local f = buildMplusPopup()
+    f._mode = "rate"
+    f:SetTitle(L["Rate group"])
+    f:SetData(nil, members)
+    f:Show()
+    return true
+end
+
+local function refreshRateButton()
+    if tabUI.rateBtn then tabUI.rateBtn:SetEnabled(RememberMe:CanRateGroup()) end
+end
+
+local MIN_TOGETHER = 300
+local MAX_ROWS     = 5
+local roster = { inGroup = false, isRaid = false, members = {} }
+local pendingRate
+local regenFrame
+
+local function scanRoster()
+    local out = {}
+    if not IsInGroup() then return out, false end
+    local isRaid = IsInRaid() and true or false
+    local n = GetNumGroupMembers() or 0
+    local prefix, count = "party", n - 1
+    if isRaid then prefix, count = "raid", n end
+    local unknown = UNKNOWNOBJECT or "Unknown"
+    for i = 1, count do
+        local unit = prefix .. i
+        if UnitExists(unit) and UnitIsPlayer(unit) and not UnitIsUnit(unit, "player") then
+            local name, realm = NBK:UnitPlayer(unit)
+            if not name then return nil end
+            if issecretvalue and (issecretvalue(name) or (realm ~= nil and issecretvalue(realm))) then
+                return nil
+            end
+            if name == "" or name == unknown then return nil end
+            realm = realm or GetNormalizedRealmName()
+            local key = NBK:NormalizeKey(name, realm)
+            if key then
+                local _, classFile = UnitClass(unit)
+                out[key] = { name = name, realm = realm, class = classFile }
+            end
+        end
+    end
+    return out, isRaid
+end
+
+local function sameMember(a, b)
+    return NBK:NormalizeKey(a.name, a.realm) == NBK:NormalizeKey(b.name, b.realm)
+end
+
+local function openRatePopupFor(players)
+    local f = buildMplusPopup()
+    local recentMplus = (GetTime() - (RememberMe._lastPopupAt or -1e9)) < 15
+    if f:IsShown() and f._mode == "mplus" then return end
+    if recentMplus then return end
+    local list = {}
+    if f:IsShown() and f._mode == "rate" and f._members then
+        for _, m in ipairs(f._members) do list[#list + 1] = m end
+    end
+    for _, p in ipairs(players) do
+        local dup = false
+        for _, m in ipairs(list) do if sameMember(m, p) then dup = true; break end end
+        if not dup then list[#list + 1] = p end
+    end
+    while #list > MAX_ROWS do table.remove(list, 1) end
+    f._mode, f._members = "rate", list
+    f:SetTitle(NBK.L["Rate group"])
+    f:SetData(nil, list)
+    f:Show()
+end
+
+local function onRegenEnabled()
+    if regenFrame then regenFrame:UnregisterEvent("PLAYER_REGEN_ENABLED") end
+    local players = pendingRate
+    pendingRate = nil
+    if players and #players > 0 then openRatePopupFor(players) end
+end
+
+local function promptFor(departed, now)
+    local pick = {}
+    for _, m in ipairs(departed) do
+        if now - (m.since or now) >= MIN_TOGETHER then
+            local okBL, onBL = pcall(NBK.IsBlacklisted, NBK, m.name, m.realm)
+            if not (okBL and onBL) and not RememberMe:HasEntry(m.name, m.realm) then
+                pick[#pick + 1] = { name = m.name, realm = m.realm, class = m.class }
+            end
+        end
+    end
+    if #pick == 0 then return end
+    if InCombatLockdown() then
+        pendingRate = pendingRate or {}
+        for _, p in ipairs(pick) do pendingRate[#pendingRate + 1] = p end
+        if not regenFrame then
+            regenFrame = CreateFrame("Frame")
+            regenFrame:SetScript("OnEvent", onRegenEnabled)
+        end
+        regenFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+        return
+    end
+    openRatePopupFor(pick)
+end
+
+local function onRosterChanged(silent)
+    local cur, isRaid = scanRoster()
+    if not cur then return end
+    local now = GetTime()
+    local inGroup = IsInGroup() and true or false
+
+    local departed = {}
+    for key, m in pairs(roster.members) do
+        if not cur[key] then departed[#departed + 1] = m end
+    end
+    for key, m in pairs(cur) do
+        local old = roster.members[key]
+        m.since = old and old.since or now
+    end
+    local wasInGroup, wasRaid = roster.inGroup, roster.isRaid
+    roster.members, roster.inGroup, roster.isRaid = cur, inGroup, isRaid
+    if silent or #departed == 0 then return end
+
+    local s = settings()
+    if wasInGroup and not inGroup then
+        if wasRaid then return end
+        if s.promptOnLeave == true
+           or (s.promptOnMemberLeave == true and #departed == 1) then
+            promptFor(departed, now)
+        end
+    elseif s.promptOnMemberLeave == true then
+        if (isRaid or wasRaid) and s.promptInRaid ~= true then return end
+        promptFor(departed, now)
+    end
 end
 
 function RememberMe:OnEnable()
@@ -1224,8 +1563,10 @@ function RememberMe:OnEnable()
         self._addPlayerHooked = true
         hooksecurefunc(NBK, "AddPlayer", function(_, name, realm)
 
-            local r = realm
-            if not r or r == "" then r = GetNormalizedRealmName() end
+            if realm == "" then realm = nil end
+            local key, n, r = NBK:NormalizeKey(name, realm)
+            if not key then return end
+            name = n
 
             if C_Timer and C_Timer.After then
                 C_Timer.After(0, function() promptRememberMeConflict(name, r) end)
@@ -1235,41 +1576,22 @@ function RememberMe:OnEnable()
         end)
     end
 
-    local MIN_RUN_SECONDS = 30
+    local rosterFrame = CreateFrame("Frame")
+    rosterFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
+    rosterFrame:SetScript("OnEvent", function()
+        refreshRateButton()
+        onRosterChanged(false)
+    end)
+    onRosterChanged(true)
+
+    if not RememberMe.HAS_MPLUS then return end
 
     local f = CreateFrame("Frame")
-    f:RegisterEvent("CHALLENGE_MODE_START")
     f:RegisterEvent("CHALLENGE_MODE_COMPLETED")
-    f:RegisterEvent("CHALLENGE_MODE_RESET")
-    self._inMplusRun   = false
-    self._runStartedAt = 0
     self._lastPopupAt  = 0
 
     f:SetScript("OnEvent", function(_, event)
-        if event == "CHALLENGE_MODE_START" then
-
-            if not self._inMplusRun then
-                self._inMplusRun   = true
-                self._runStartedAt = GetTime() or 0
-            end
-            return
-        end
-
-        if not self._inMplusRun then
-            return
-        end
-
-        local now     = GetTime() or 0
-        local elapsed = now - (self._runStartedAt or 0)
-
-        if elapsed < MIN_RUN_SECONDS then
-            self._inMplusRun   = false
-            self._runStartedAt = 0
-            return
-        end
-
-        self._inMplusRun   = false
-        self._runStartedAt = 0
+        local now = GetTime() or 0
 
         if now - (self._lastPopupAt or 0) < 5 then
             return

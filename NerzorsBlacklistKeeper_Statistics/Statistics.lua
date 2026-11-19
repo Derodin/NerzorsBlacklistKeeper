@@ -94,6 +94,7 @@ local function computeEntries(stats)
         reasons[reason] = (reasons[reason] or 0) + 1
 
         local zone = trim(e.zone)
+        if zone then zone = trim((zone:gsub("%s*%+%d+$", ""))) end
         if not zone or zone == "" then zone = L("Unknown", "Unknown") end
         zones[zone] = (zones[zone] or 0) + 1
 

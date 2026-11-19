@@ -129,7 +129,7 @@ local function buildExport()
     ex.f = f
     local content = f.content
 
-    local fromLabel = NUL:CreateLabel(content, { text = L["From:"], wrap = false })
+    local fromLabel = NUL:CreateLabel(content, { text = L["From:"], wrap = false, role = "field" })
     fromLabel:SetPoint("TOPLEFT", 0, -5)
     ex.from = NUL:Dropdown(content, {
         width = 260, height = 24,
