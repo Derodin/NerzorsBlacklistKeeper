@@ -20,6 +20,7 @@
 <p>
   <img src="https://cf.way2muchnoise.eu/1554935.svg?gameVersionTypeId=517" alt="CurseForge Downloads"/>
   <img src="https://img.shields.io/github/v/release/Nerzors/NerzorsBlacklistKeeper?style=flat-square&color=252669&labelColor=1B1F2B" alt="Latest Release"/>
+  <img alt="downloads" src="https://img.shields.io/github/downloads/Nerzors/NerzorsBlacklistKeeper/total?style=flat&color=252669&labelColor=1B1F2B&label=total%20downloads" />
   <img src="https://img.shields.io/github/last-commit/Nerzors/NerzorsBlacklistKeeper?style=flat-square&color=A87CE8&labelColor=1B1F2B" alt="Last Commit"/>
   <img src="https://img.shields.io/github/issues/Nerzors/NerzorsBlacklistKeeper?style=flat-square&color=252669&labelColor=1B1F2B" alt="Open Issues"/>
   <img src="https://img.shields.io/github/stars/Nerzors/NerzorsBlacklistKeeper?style=flat-square&color=A87CE8&labelColor=1B1F2B" alt="Stars"/>
